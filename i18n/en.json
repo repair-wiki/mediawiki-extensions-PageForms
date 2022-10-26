@@ -168,7 +168,7 @@
 	"pf_formstart_docu": "Enter the name of a page here, to be edited with the form \"$1\".\nIf this page already exists, you will be sent to the form for editing that page.\nOtherwise, you will be sent to the form for adding the page.",
 	"pf_formstart_noform_docu": "Enter the name of a page here, and select the form to edit it with.\nIf this page already exists, you will be sent to the form for editing that page.\nOtherwise, you will be sent to the form for adding the page.",
 	"pf_formstart_createoredit": "Create or edit",
-	"formedit": "Edit with form",
+	"formedit": "Edit semantics",
 	"pf-formedit-selectform": "Select a form to create this page:",
 	"pf-noforms-error": "Error: No forms have been defined on this site.",
 	"pf-formedit-mainforms": "Main forms:",
