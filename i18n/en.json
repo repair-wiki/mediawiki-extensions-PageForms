@@ -181,7 +181,7 @@
 	"pf_formedit_altforms": "You can instead add this page with one of the following forms:",
 	"pf_formedit_altformsonly": "Please select from one of the following forms to add this page:",
 	"pf_formcreate": "Create with form",
-	"pf_viewform": "View form",
+	"pf_viewform": "Edit semantics",
 	"pf_editsource": "Edit source",
 	"pf_formedit_edittitle": "Edit $1: $2",
 	"pf_formedit_morethanoneform": "'''Warning:''' More than one default form is defined for this page.",
