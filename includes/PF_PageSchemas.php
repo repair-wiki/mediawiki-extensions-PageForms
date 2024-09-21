@@ -13,11 +13,6 @@ use MediaWiki\MediaWikiServices;
  */
 
 class PFPageSchemas extends PSExtensionHandler {
-	public static function registerClass() {
-		global $wgPageSchemasHandlerClasses;
-		$wgPageSchemasHandlerClasses[] = 'PFPageSchemas';
-		return true;
-	}
 
 	/**
 	 * Creates an object to hold form-wide information, based on an XML
@@ -600,7 +595,7 @@ class PFPageSchemas extends PSExtensionHandler {
 				$psField->getDelimiter(),
 				$psField->getDisplay()
 			);
-			$templateField->setNamespace( $psField->getNamespace() );
+			$templateField->setNSText( $psField->getNamespace() );
 			if ( defined( 'CARGO_VERSION' ) ) {
 				$cargoFieldArray = $psField->getObject( 'cargo_Field' );
 				$fieldType = PageSchemas::getValueFromObject( $cargoFieldArray, 'Type' );
@@ -652,14 +647,7 @@ class PFPageSchemas extends PSExtensionHandler {
 		$params['user_id'] = $user->getId();
 		$params['page_text'] = $formContents;
 		$job = new PSCreatePageJob( $formTitle, $params );
-
-		$jobs = [ $job ];
-		if ( method_exists( MediaWikiServices::class, 'getJobQueueGroup' ) ) {
-			// MW 1.37+
-			MediaWikiServices::getInstance()->getJobQueueGroup()->push( $jobs );
-		} else {
-			JobQueueGroup::singleton()->push( $jobs );
-		}
+		MediaWikiServices::getInstance()->getJobQueueGroup()->push( $job );
 	}
 
 	/**
@@ -788,12 +776,7 @@ class PFPageSchemas extends PSExtensionHandler {
 			}
 		}
 
-		if ( method_exists( MediaWikiServices::class, 'getJobQueueGroup' ) ) {
-			// MW 1.37+
-			MediaWikiServices::getInstance()->getJobQueueGroup()->push( $jobs );
-		} else {
-			JobQueueGroup::singleton()->push( $jobs );
-		}
+		MediaWikiServices::getInstance()->getJobQueueGroup()->push( $jobs );
 
 		// Create form, if it's specified.
 		$formName = self::getFormName( $pageSchemaObj );

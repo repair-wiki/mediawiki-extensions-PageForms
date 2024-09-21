@@ -277,10 +277,10 @@ END;
 
 	static function printTemplateStyleInput( $htmlFieldName, $curSelection = null ) {
 		if ( !$curSelection ) {
-			$curSelection = 'standard';
+			$curSelection = 'table';
 		}
 		$text = "<p class=\"pfCreateTemplateStyle\">" . wfMessage( 'pf_createtemplate_outputformat' )->escaped() . "\n";
-		$text .= self::printTemplateStyleButton( 'standard', 'pf_createtemplate_standardformat', $htmlFieldName, $curSelection );
+		$text .= self::printTemplateStyleButton( 'table', 'pf_createtemplate_standardformat', $htmlFieldName, $curSelection );
 		$text .= self::printTemplateStyleButton( 'infobox', 'pf_createtemplate_infoboxformat', $htmlFieldName, $curSelection );
 		$text .= self::printTemplateStyleButton( 'plain', 'pf_createtemplate_plainformat', $htmlFieldName, $curSelection );
 		$text .= self::printTemplateStyleButton( 'sections', 'pf_createtemplate_sectionsformat', $htmlFieldName, $curSelection );
@@ -328,7 +328,7 @@ END;
 				if ( count( $var_elements ) != 2 ) {
 					continue;
 				}
-				list( $field_field, $id ) = $var_elements;
+				[ $field_field, $id ] = $var_elements;
 				if ( $field_field == 'name' && $id != 'starter' ) {
 					$field = PFTemplateField::create(
 						$val,

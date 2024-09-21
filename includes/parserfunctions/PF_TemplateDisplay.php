@@ -19,6 +19,7 @@ class PFTemplateDisplay {
 
 		$templateFields = [];
 		$format = 'infobox';
+		$infoboxTitle = null;
 		$tableFieldValues = [];
 
 		$templateTitle = $frame->title;
@@ -39,6 +40,8 @@ class PFTemplateDisplay {
 				$value = trim( $parts[1] );
 				if ( $key == '_format' ) {
 					$format = $value;
+				} elseif ( $key == '_title' ) {
+					$infoboxTitle = $value;
 				} else {
 					$tableFieldValues[$key] = $value;
 				}
@@ -53,14 +56,25 @@ class PFTemplateDisplay {
 				$unescapedFieldName = str_replace( '_', ' ', $fieldName );
 				$curFieldValue = $frame->getArgument( $unescapedFieldName );
 			}
-			$tableFieldValues[$fieldName] = $curFieldValue;
+			$tableFieldValues[$fieldName] = $parser->internalParse( $curFieldValue );
 		}
 
 		if ( $format == 'table' ) {
 			$text = '<table class="wikitable">' . "\n";
 		} elseif ( $format == 'infobox' ) {
 			$text = '<table class="infoboxTable">' . "\n";
-			$text .= '<tr><th colspan="2" class="infoboxTitle">' . $title->getFullText() . '</th></tr>' . "\n";
+			// If it's blank (as opposed to null), it means the
+			// infobox title was deliberately set to empty, to avoid
+			// displaying a title row.
+			if ( $infoboxTitle !== '' ) {
+				if ( $infoboxTitle === null ) {
+					$pageProps = MediaWikiServices::getInstance()->getPageProps()
+						->getProperties( $title, 'displaytitle' );
+					$infoboxTitle = array_shift( $pageProps ) ??
+						htmlspecialchars( $title->getFullText(), ENT_NOQUOTES );
+				}
+				$text .= '<tr><th colspan="2" class="infoboxTitle">' . $infoboxTitle . '</th></tr>' . "\n";
+			}
 		} else {
 			$text = '';
 		}
@@ -128,8 +142,6 @@ class PFTemplateDisplay {
 				$formattedFieldValue = self::ratingText( $fieldValue );
 			} elseif ( $fieldType == 'File' ) {
 				$formattedFieldValue = self::fileText( $fieldValue );
-			} elseif ( $fieldType == 'URL' ) {
-				$formattedFieldValue = self::urlText( $fieldValue );
 			} elseif ( $templateField->isList() ) {
 				$formattedFieldValue = self::stringListText( $fieldValue, $templateField );
 			} else {
@@ -159,7 +171,7 @@ class PFTemplateDisplay {
 		$mappingFormat = new CargoMapsFormat( $parser->getOutput() );
 
 		try {
-			list( $lat, $lon ) = CargoUtils::parseCoordinatesString( $coordinatesStr );
+			[ $lat, $lon ] = CargoUtils::parseCoordinatesString( $coordinatesStr );
 		} catch ( MWException $e ) {
 			return '';
 		}
@@ -239,15 +251,7 @@ class PFTemplateDisplay {
 
 	private static function fileText( $value ) {
 		$title = Title::newFromText( $value, NS_FILE );
-		if ( $title == null || !$title->exists() ) {
-			return $value;
-		}
-		if ( method_exists( MediaWikiServices::class, 'getRepoGroup' ) ) {
-			// MediaWiki 1.34+
-			$file = MediaWikiServices::getInstance()->getRepoGroup()->getLocalRepo()->newFile( $title );
-		} else {
-			$file = wfLocalFile( $title );
-		}
+		$file = MediaWikiServices::getInstance()->getRepoGroup()->findFile( $title );
 		return Linker::makeThumbLinkObj(
 			$title,
 			$file,
@@ -255,11 +259,6 @@ class PFTemplateDisplay {
 			'',
 			'left'
 		);
-	}
-
-	private static function urlText( $value ) {
-		global $wgExternalLinkTarget;
-		return Linker::makeExternalLink( $value, $value, true, '', [ 'target' => $wgExternalLinkTarget ] );
 	}
 
 }

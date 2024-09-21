@@ -26,6 +26,7 @@ class PFAutocompleteAPI extends ApiBase {
 		$category = $params['category'];
 		$wikidata = $params['wikidata'];
 		$concept = $params['concept'];
+		$query = $params['semantic_query'];
 		$cargo_table = $params['cargo_table'];
 		$cargo_field = $params['cargo_field'];
 		$cargo_where = $params['cargo_where'];
@@ -54,13 +55,20 @@ class PFAutocompleteAPI extends ApiBase {
 			$data = PFValuesUtils::getAllPagesForCategory( $category, 3, $substr );
 			$map = $wgPageFormsUseDisplayTitle;
 			if ( $map ) {
-				$data = PFValuesUtils::disambiguateLabels( $data );
+				$data = PFMappingUtils::disambiguateLabels( $data );
 			}
 		} elseif ( $concept !== null ) {
 			$data = PFValuesUtils::getAllPagesForConcept( $concept, $substr );
 			$map = $wgPageFormsUseDisplayTitle;
 			if ( $map ) {
-				$data = PFValuesUtils::disambiguateLabels( $data );
+				$data = PFMappingUtils::disambiguateLabels( $data );
+			}
+		} elseif ( $query !== null ) {
+			$query = PFValuesUtils::processSemanticQuery( $query, $substr );
+			$data = PFValuesUtils::getAllPagesForQuery( $query );
+			$map = $wgPageFormsUseDisplayTitle;
+			if ( $map ) {
+				$data = PFMappingUtils::disambiguateLabels( $data );
 			}
 		} elseif ( $cargo_table !== null && $cargo_field !== null ) {
 			$data = self::getAllValuesForCargoField( $cargo_table, $cargo_field, $cargo_where, $substr, $base_cargo_table, $base_cargo_field, $basevalue );
@@ -89,6 +97,8 @@ class PFAutocompleteAPI extends ApiBase {
 				$this->dieWithError( $data, $code );
 			}
 		}
+		// Sort the values by their lengths for better UX
+		$data = self::sortValuesByLength( $data );
 
 		// to prevent JS parsing problems, display should be the same
 		// even if there are no results
@@ -98,20 +108,17 @@ class PFAutocompleteAPI extends ApiBase {
 		}
 		*/
 
-		// Format data as the API requires it - this is not needed
-		// for "values from url", where the data is already formatted
-		// correctly.
-		if ( $external_url === null ) {
-			$formattedData = [];
-			foreach ( $data as $index => $value ) {
-				if ( $map ) {
-					$formattedData[] = [ 'title' => $index, 'displaytitle' => $value ];
-				} else {
-					$formattedData[] = [ 'title' => $value ];
-				}
+		// Format data as the API requires it - in the case of "values
+		// from url", it's a little odd because we are re-adding the
+		// "title" key after having removed it, but the removal was
+		// needed for the sorting.
+		$formattedData = [];
+		foreach ( $data as $index => $value ) {
+			if ( $map ) {
+				$formattedData[] = [ 'title' => $index, 'displaytitle' => $value ];
+			} else {
+				$formattedData[] = [ 'title' => $value ];
 			}
-		} else {
-			$formattedData = $data;
 		}
 
 		// Set top-level elements.
@@ -134,6 +141,7 @@ class PFAutocompleteAPI extends ApiBase {
 			'category' => null,
 			'concept' => null,
 			'wikidata' => null,
+			'semantic_query' => null,
 			'cargo_table' => null,
 			'cargo_field' => null,
 			'cargo_where' => null,
@@ -153,6 +161,7 @@ class PFAutocompleteAPI extends ApiBase {
 			'category' => 'Category for which to search values',
 			'concept' => 'Concept for which to search values',
 			'wikidata' => 'Search string for getting values from wikidata',
+			'semantic_query' => 'Query for which to search values',
 			'namespace' => 'Namespace for which to search values',
 			'external_url' => 'Alias for external URL from which to get values',
 			'baseprop' => 'A previous property in the form to check against',
@@ -170,6 +179,7 @@ class PFAutocompleteAPI extends ApiBase {
 			'api.php?action=pfautocomplete&substr=te',
 			'api.php?action=pfautocomplete&substr=te&property=Has_author',
 			'api.php?action=pfautocomplete&substr=te&category=Authors',
+			'api.php?action=pfautocomplete&semantic_query=((Category:Test)) ((MyProperty::Something))',
 		];
 	}
 
@@ -222,80 +232,62 @@ class PFAutocompleteAPI extends ApiBase {
 		$basePropertyName = null,
 		$baseValue = null
 	) {
-		global $smwgDefaultStore;
-
-		$db = wfGetDB( DB_REPLICA );
+		$db = PFUtils::getReadDB();
 		$sqlOptions = [
 			'LIMIT' => PFValuesUtils::getMaxValuesToRetrieve( $substring )
 		];
 
-		if ( method_exists( 'SMW\DataValueFactory', 'newPropertyValueByLabel' ) ) {
-			// SMW 3.0+
-			$property = SMW\DataValueFactory::getInstance()->newPropertyValueByLabel( $property_name );
+		$property = SMW\DataValueFactory::getInstance()->newPropertyValueByLabel( $property_name );
+		$propertyHasTypePage = ( $property->getPropertyTypeID() == '_wpg' );
+		$store = smwfGetStore();
+		if ( $store instanceof SMW\SQLStore\SQLStore ) {
+			$inceptiveProperty = $property->getInceptiveProperty();
+			$propertyTableId = $store->findPropertyTableID( $inceptiveProperty );
+			$isFixedProperty = preg_match( '/smw_fpt_/', $propertyTableId );
 		} else {
-			$property = SMWPropertyValue::makeUserProperty( $property_name );
+			$isFixedProperty = false;
 		}
 
-		$propertyHasTypePage = ( $property->getPropertyTypeID() == '_wpg' );
-		$conditions = [ 'p_ids.smw_title' => $property_name ];
-		if ( $propertyHasTypePage ) {
-			$valueField = 'o_ids.smw_title';
-			if ( $smwgDefaultStore === 'SMWSQLStore2' ) {
-				$idsTable = $db->tableName( 'smw_ids' );
-				$propsTable = $db->tableName( 'smw_rels2' );
-			} else {
-				// SMWSQLStore3 - also the backup for SMWSPARQLStore
-				$idsTable = $db->tableName( 'smw_object_ids' );
-				$propsTable = $db->tableName( 'smw_di_wikipage' );
-			}
-			$fromClause = "$propsTable p JOIN $idsTable p_ids ON p.p_id = p_ids.smw_id JOIN $idsTable o_ids ON p.o_id = o_ids.smw_id";
+		$idsTable = $db->tableName( 'smw_object_ids' );
+
+		if ( $isFixedProperty ) {
+			$propsTable = $db->tableName( $propertyTableId );
+			$fromClause = "$propsTable p JOIN $idsTable p_ids ON p.s_id = p_ids.smw_id";
 		} else {
-			if ( $smwgDefaultStore === 'SMWSQLStore2' ) {
-				$valueField = 'p.value_xsd';
-				$idsTable = $db->tableName( 'smw_ids' );
-				$propsTable = $db->tableName( 'smw_atts2' );
+			$conditions = [ 'p_ids.smw_title' => $property_name ];
+			if ( $propertyHasTypePage ) {
+				$propsTable = $db->tableName( 'smw_di_wikipage' );
 			} else {
-				// SMWSQLStore3 - also the backup for SMWSPARQLStore
-				$valueField = 'p.o_hash';
-				$idsTable = $db->tableName( 'smw_object_ids' );
 				$propsTable = $db->tableName( 'smw_di_blob' );
 			}
+
 			$fromClause = "$propsTable p JOIN $idsTable p_ids ON p.p_id = p_ids.smw_id";
 		}
 
+		if ( $propertyHasTypePage ) {
+			$valueField = 'o_ids.smw_title';
+			$fromClause .= " JOIN $idsTable o_ids ON p.o_id = o_ids.smw_id";
+		} else {
+			$valueField = 'p.o_hash';
+		}
+
 		if ( $basePropertyName !== null ) {
-			if ( method_exists( 'SMW\DataValueFactory', 'newPropertyValueByLabel' ) ) {
-				$baseProperty = SMW\DataValueFactory::getInstance()->newPropertyValueByLabel( $basePropertyName );
-			} else {
-				// SMW 3.0+
-				$baseProperty = SMWPropertyValue::makeUserProperty( $basePropertyName );
-			}
+			$baseProperty = SMW\DataValueFactory::getInstance()->newPropertyValueByLabel( $basePropertyName );
 			$basePropertyHasTypePage = ( $baseProperty->getPropertyTypeID() == '_wpg' );
 
 			$basePropertyName = str_replace( ' ', '_', $basePropertyName );
 			$conditions['base_p_ids.smw_title'] = $basePropertyName;
 			if ( $basePropertyHasTypePage ) {
-				if ( $smwgDefaultStore === 'SMWSQLStore2' ) {
-					$idsTable = $db->tableName( 'smw_ids' );
-					$propsTable = $db->tableName( 'smw_rels2' );
-				} else {
-					$idsTable = $db->tableName( 'smw_object_ids' );
-					$propsTable = $db->tableName( 'smw_di_wikipage' );
-				}
+				$idsTable = $db->tableName( 'smw_object_ids' );
+				$propsTable = $db->tableName( 'smw_di_wikipage' );
 				$fromClause .= " JOIN $propsTable p_base ON p.s_id = p_base.s_id";
 				$fromClause .= " JOIN $idsTable base_p_ids ON p_base.p_id = base_p_ids.smw_id JOIN $idsTable base_o_ids ON p_base.o_id = base_o_ids.smw_id";
 				$baseValue = str_replace( ' ', '_', $baseValue );
 				$conditions['base_o_ids.smw_title'] = $baseValue;
 			} else {
-				if ( $smwgDefaultStore === 'SMWSQLStore2' ) {
-					$baseValueField = 'p_base.value_xsd';
-					$idsTable = $db->tableName( 'smw_ids' );
-					$propsTable = $db->tableName( 'smw_atts2' );
-				} else {
-					$baseValueField = 'p_base.o_hash';
-					$idsTable = $db->tableName( 'smw_object_ids' );
-					$propsTable = $db->tableName( 'smw_di_blob' );
-				}
+				$baseValueField = 'p_base.o_hash';
+				$idsTable = $db->tableName( 'smw_object_ids' );
+				$propsTable = $db->tableName( 'smw_di_blob' );
 				$fromClause .= " JOIN $propsTable p_base ON p.s_id = p_base.s_id";
 				$fromClause .= " JOIN $idsTable base_p_ids ON p_base.p_id = base_p_ids.smw_id";
 				$conditions[$baseValueField] = $baseValue;
@@ -317,7 +309,6 @@ class PFAutocompleteAPI extends ApiBase {
 			$values[] = str_replace( '_', ' ', $row[0] );
 		}
 		$res->free();
-		$values = self::shiftExactMatch( $substring, $values );
 		return $values;
 	}
 
@@ -381,9 +372,12 @@ class PFAutocompleteAPI extends ApiBase {
 			if ( $whereStr != '' ) {
 				$whereStr .= " AND ";
 			}
-			$fieldIsList = self::cargoFieldIsList( $cargoTable, $cargoField );
+			// @TODO - this is duplicate work; the schema is retrieved
+			// again when the CargoSQLQuery object is created. There should
+			// be some way of avoiding that duplicate retrieval.
+			$fieldDesc = PFUtils::getCargoFieldDescription( $cargoTable, $cargoField );
 
-			if ( $fieldIsList ) {
+			if ( $fieldDesc !== null && $fieldDesc->mIsList ) {
 				// If it's a list field, we query directly on
 				// the "helper table" for that field. We could
 				// instead use "HOLDS LIKE", but this would
@@ -445,7 +439,8 @@ class PFAutocompleteAPI extends ApiBase {
 			$havingStr = null,
 			$cargoField,
 			PFValuesUtils::getMaxValuesToRetrieve( $substring ),
-			$offsetStr = 0
+			$offsetStr = 0,
+			true
 		);
 		$queryResults = $sqlQuery->run();
 
@@ -466,43 +461,22 @@ class PFAutocompleteAPI extends ApiBase {
 			// quotes, at least.
 			$values[] = str_replace( '&quot;', '"', $value );
 		}
-		$values = self::shiftExactMatch( $substring, $values );
 		return $values;
-	}
-
-	static function cargoFieldIsList( $cargoTable, $cargoField ) {
-		// @TODO - this is duplicate work; the schema is retrieved
-		// again when the CargoSQLQuery object is created. There should
-		// be some way of avoiding that duplicate retrieval.
-		try {
-			$tableSchemas = CargoUtils::getTableSchemas( [ $cargoTable ] );
-		} catch ( MWException $e ) {
-			return false;
-		}
-		if ( !array_key_exists( $cargoTable, $tableSchemas ) ) {
-			return false;
-		}
-		$tableSchema = $tableSchemas[$cargoTable];
-		if ( !array_key_exists( $cargoField, $tableSchema->mFieldDescriptions ) ) {
-			return false;
-		}
-		$fieldDesc = $tableSchema->mFieldDescriptions[$cargoField];
-		return $fieldDesc->mIsList;
 	}
 
 	/**
-	 * Move the exact match to the top for better autocompletion
-	 * @param string $substring
+	 * Sort the values of an array by their lengths (shortest to longest)
+	 *
 	 * @param array $values
 	 * @return array $values
 	 */
-	static function shiftExactMatch( $substring, $values ) {
-		$firstMatchIdx = array_search( $substring, $values );
-		if ( $firstMatchIdx ) {
-			unset( $values[ $firstMatchIdx ] );
-			array_unshift( $values, $substring );
+	static function sortValuesByLength( $values ) {
+		if ( empty( $values ) ) {
+			return $values;
 		}
+		uasort( $values, static function ( $a, $b ) {
+			return strlen( $a ) - strlen( $b );
+		} );
 		return $values;
 	}
-
 }

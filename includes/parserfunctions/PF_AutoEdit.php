@@ -24,7 +24,7 @@ class PFAutoEdit {
 		global $wgPageFormsAutoeditNamespaces;
 
 		$parser->getOutput()->addModules( [ 'ext.pageforms.autoedit' ] );
-		$parser->getOutput()->preventClickjacking( true );
+		$parser->getOutput()->setPreventClickjacking( true );
 
 		// Set defaults.
 		$formcontent = '';
@@ -47,12 +47,7 @@ class PFAutoEdit {
 		// We don't need the parser.
 		array_shift( $params );
 
-		if ( method_exists( MediaWikiServices::class, 'getWikiPageFactory' ) ) {
-			// MW 1.36+
-			$wikiPageFactory = MediaWikiServices::getInstance()->getWikiPageFactory();
-		} else {
-			$wikiPageFactory = null;
-		}
+		$wikiPageFactory = MediaWikiServices::getInstance()->getWikiPageFactory();
 
 		foreach ( $params as $param ) {
 			$elements = explode( '=', $param, 2 );
@@ -110,12 +105,7 @@ class PFAutoEdit {
 							$errorMsg = wfMessage( 'pf-autoedit-invalidnamespace', $targetTitle->getNsText() )->parse();
 							return Html::element( 'div', [ 'class' => 'error' ], $errorMsg );
 						}
-						if ( $wikiPageFactory !== null ) {
-							// MW 1.36+
-							$targetWikiPage = $wikiPageFactory->newFromTitle( $targetTitle );
-						} else {
-							$targetWikiPage = WikiPage::factory( $targetTitle );
-						}
+						$targetWikiPage = $wikiPageFactory->newFromTitle( $targetTitle );
 						$targetWikiPage->clear();
 						$editTime = $targetWikiPage->getTimestamp();
 						$latestRevId = $targetWikiPage->getLatest();

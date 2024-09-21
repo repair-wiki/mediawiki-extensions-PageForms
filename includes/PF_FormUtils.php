@@ -21,9 +21,10 @@ class PFFormUtils {
 	 * Add a hidden input for each field in the template call that's
 	 * not handled by the form itself
 	 * @param PFTemplateInForm|null $template_in_form
+	 * @param bool $is_autoedit
 	 * @return string
 	 */
-	static function unhandledFieldsHTML( $template_in_form ) {
+	static function unhandledFieldsHTML( $template_in_form, $is_autoedit = false ) {
 		// This shouldn't happen, but sometimes this value is null.
 		// @TODO - fix the code that calls this function so the
 		// value is never null.
@@ -35,10 +36,20 @@ class PFFormUtils {
 		$templateName = str_replace( ' ', '_', $template_in_form->getTemplateName() );
 		$text = "";
 		foreach ( $template_in_form->getValuesFromPage() as $key => $value ) {
-			if ( $key !== null && !is_numeric( $key ) ) {
-				$key = urlencode( $key );
-				$text .= Html::hidden( '_unhandled_' . $templateName . '_' . $key, $value );
+			if ( $key === null || is_numeric( $key ) ) {
+				continue;
 			}
+			// Handle the special case of #autoedit - we ignore
+			// blank values, because we don't want a case like
+			// {{#autoedit:...|City={{{City|}}}...}} (within a
+			// template) to blank the value of "City", if the user
+			// didn't enter anything.
+			if ( $is_autoedit && $value === '' ) {
+				continue;
+			}
+
+			$key = urlencode( $key );
+			$text .= Html::hidden( '_unhandled_' . $templateName . '_' . $key, $value );
 		}
 		return $text;
 	}
@@ -47,7 +58,7 @@ class PFFormUtils {
 		global $wgPageFormsTabIndex;
 
 		if ( $label == null ) {
-			$label = wfMessage( 'summary' )->text();
+			$label = wfMessage( 'summary' )->parse();
 		}
 
 		$wgPageFormsTabIndex++;
@@ -63,11 +74,15 @@ class PFFormUtils {
 		if ( $is_disabled ) {
 			$attr['disabled'] = true;
 		}
+		if ( array_key_exists( 'class', $attr ) ) {
+			$attr['classes'] = [ $attr['class'] ];
+		}
+
 		$text = new OOUI\FieldLayout(
 			new OOUI\TextInputWidget( $attr ),
 			[
 				'align' => 'top',
-				'label' => $label
+				'label' => new OOUI\HtmlSnippet( $label )
 			]
 		);
 
@@ -80,13 +95,8 @@ class PFFormUtils {
 		$wgPageFormsTabIndex++;
 		if ( !$form_submitted ) {
 			$user = RequestContext::getMain()->getUser();
-			if ( method_exists( MediaWikiServices::class, 'getUserOptionsLookup' ) ) {
-				// MediaWiki 1.35+
-				$is_checked = MediaWikiServices::getInstance()->getUserOptionsLookup()
-					->getOption( $user, 'minordefault' );
-			} else {
-				$is_checked = $user->getOption( 'minordefault' );
-			}
+			$is_checked = MediaWikiServices::getInstance()->getUserOptionsLookup()
+				->getOption( $user, 'minordefault' );
 		}
 
 		if ( $label == null ) {
@@ -104,6 +114,10 @@ class PFFormUtils {
 		}
 		if ( $is_disabled ) {
 			$attrs['disabled'] = true;
+		}
+		// @phan-suppress-next-line PhanImpossibleTypeComparison
+		if ( array_key_exists( 'class', $attrs ) ) {
+			$attrs['classes'] = [ $attrs['class'] ];
 		}
 
 		// We can't use OOUI\FieldLayout here, because it will make the display too wide.
@@ -129,47 +143,18 @@ class PFFormUtils {
 		if ( !$form_submitted ) {
 			$user = RequestContext::getMain()->getUser();
 			$services = MediaWikiServices::getInstance();
-			if ( method_exists( \MediaWiki\Watchlist\WatchlistManager::class, 'isWatched' ) ) {
-				// MediaWiki 1.37+
-				// UserOptionsLookup::getOption was introduced in MW 1.35
-				$userOptionsLookup = $services->getUserOptionsLookup();
-				$watchlistManager = $services->getWatchlistManager();
-				if ( $userOptionsLookup->getOption( $user, 'watchdefault' ) ) {
-					# Watch all edits
-					$is_checked = true;
-				} elseif ( $userOptionsLookup->getOption( $user, 'watchcreations' ) &&
-					!$wgTitle->exists() ) {
-					# Watch creations
-					$is_checked = true;
-				} elseif ( $watchlistManager->isWatched( $user, $wgTitle ) ) {
-					# Already watched
-					$is_checked = true;
-				}
-			} elseif ( method_exists( MediaWikiServices::class, 'getUserOptionsLookup' ) ) {
-				// MediaWiki 1.35+
-				$userOptionsLookup = $services->getUserOptionsLookup();
-				if ( $userOptionsLookup->getOption( $user, 'watchdefault' ) ) {
-					# Watch all edits
-					$is_checked = true;
-				} elseif ( $userOptionsLookup->getOption( $user, 'watchcreations' ) &&
-					!$wgTitle->exists() ) {
-					# Watch creations
-					$is_checked = true;
-				} elseif ( $user->isWatched( $wgTitle ) ) {
-					# Already watched
-					$is_checked = true;
-				}
-			} else {
-				if ( $user->getOption( 'watchdefault' ) ) {
-					# Watch all edits
-					$is_checked = true;
-				} elseif ( $user->getOption( 'watchcreations' ) && !$wgTitle->exists() ) {
-					# Watch creations
-					$is_checked = true;
-				} elseif ( $user->isWatched( $wgTitle ) ) {
-					# Already watched
-					$is_checked = true;
-				}
+			$userOptionsLookup = $services->getUserOptionsLookup();
+			$watchlistManager = $services->getWatchlistManager();
+			if ( $userOptionsLookup->getOption( $user, 'watchdefault' ) ) {
+				# Watch all edits
+				$is_checked = true;
+			} elseif ( $userOptionsLookup->getOption( $user, 'watchcreations' ) &&
+				!$wgTitle->exists() ) {
+				# Watch creations
+				$is_checked = true;
+			} elseif ( $watchlistManager->isWatched( $user, $wgTitle ) ) {
+				# Already watched
+				$is_checked = true;
 			}
 		}
 		if ( $label == null ) {
@@ -186,6 +171,10 @@ class PFFormUtils {
 		}
 		if ( $is_disabled ) {
 			$attrs['disabled'] = true;
+		}
+		// @phan-suppress-next-line PhanImpossibleTypeComparison
+		if ( array_key_exists( 'class', $attrs ) ) {
+			$attrs['classes'] = [ $attrs['class'] ];
 		}
 
 		// We can't use OOUI\FieldLayout here, because it will make the display too wide.
@@ -318,14 +307,19 @@ class PFFormUtils {
 		if ( $label == null ) {
 			$label = wfMessage( 'cancel' )->parse();
 		}
+		$attr['classes'] = [];
 		if ( $wgTitle == null || $wgTitle->isSpecial( 'FormEdit' ) ) {
-			$attr['classes'] = [ 'pfSendBack' ];
+			$attr['classes'][] = 'pfSendBack';
 		} else {
 			$attr['href'] = $wgTitle->getFullURL();
 		}
 		$attr['framed'] = false;
 		$attr['label'] = $label;
 		$attr['flags'] = [ 'destructive' ];
+		if ( array_key_exists( 'class', $attr ) ) {
+			$attr['classes'][] = $attr['class'];
+		}
+
 		return "\t\t" . new OOUI\ButtonWidget( $attr ) . "\n";
 	}
 
@@ -368,12 +362,7 @@ END;
 			$text .= self::minorEditInputHTML( $form_submitted, $is_disabled, false );
 		}
 
-		if ( method_exists( $user, 'isRegistered' ) ) {
-			// MW 1.34+
-			$userIsRegistered = $user->isRegistered();
-		} else {
-			$userIsRegistered = $user->isLoggedIn();
-		}
+		$userIsRegistered = $user->isRegistered();
 		if ( $userIsRegistered ) {
 			$text .= self::watchInputHTML( $form_submitted, $is_disabled );
 		}
@@ -483,12 +472,13 @@ END;
 			}
 		}
 
-		if ( $form_id !== null ) {
+		if ( $form_def !== null ) {
+			// Do nothing.
+		} elseif ( $form_id !== null ) {
 			$form_title = Title::newFromID( $form_id );
 			$form_def = PFUtils::getPageText( $form_title );
-		} elseif ( $form_def == null ) {
-			// No id, no text -> nothing to do
-
+		} else {
+			// No text, no ID -> no form definition.
 			return '';
 		}
 
@@ -605,6 +595,9 @@ END;
 
 		// Update list of form definitions
 		$listOfFormKeys = $cache->get( $cacheKeyForList );
+		if ( !is_array( $listOfFormKeys ) ) {
+			$listOfFormKeys = [];
+		}
 		// The list of values is used by self::purge, keys are ignored.
 		// This way we automatically override duplicates.
 		$listOfFormKeys[$cacheKeyForForm] = $cacheKeyForForm;
@@ -627,7 +620,7 @@ END;
 	 * Deletes the form definition associated with the given wiki page
 	 * from the main cache.
 	 *
-	 * Hooks: ArticlePurge, PageContentSave
+	 * Hooks: ArticlePurge
 	 *
 	 * @param WikiPage $wikipage
 	 * @return bool
@@ -662,22 +655,16 @@ END;
 
 	/**
 	 * Deletes the form definition associated with the given wiki page
-	 * from the main cache, for MW 1.35+.
+	 * from the main cache.
 	 *
 	 * Hook: MultiContentSave
 	 *
 	 * @param RenderedRevision $renderedRevision
 	 * @return bool
 	 */
-	public static function purgeCache2( RenderedRevision $renderedRevision ) {
+	public static function purgeCacheOnSave( RenderedRevision $renderedRevision ) {
 		$articleID = $renderedRevision->getRevision()->getPageId();
-		if ( method_exists( MediaWikiServices::class, 'getWikiPageFactory' ) ) {
-			// MW 1.36+
-			$wikiPage = MediaWikiServices::getInstance()->getWikiPageFactory()->newFromID( $articleID );
-		} else {
-			// MW 1.35
-			$wikiPage = WikiPage::newFromID( $articleID );
-		}
+		$wikiPage = MediaWikiServices::getInstance()->getWikiPageFactory()->newFromID( $articleID );
 		if ( $wikiPage == null ) {
 			// @TODO - should this ever happen?
 			return true;

@@ -18,7 +18,6 @@
 	/**
 	 * Inheritance class for the pf.select2 constructor
 	 *
-	 *
 	 * @class
 	 */
 	pf.select2 = pf.select2 || {};
@@ -40,7 +39,6 @@
 	 *
 	 */
 	tokens_proto.apply = function( element ) {
-		var cur_val = element.attr('value');
 		var existingValuesOnly = (element.attr("existingvaluesonly") == "true");
 		this.existingValuesOnly = existingValuesOnly;
 		this.id = element.attr( "id" );
@@ -102,7 +100,7 @@
 
 			if( !elem ) {
 				var data = $(element).select2('data');
-				elem = data.filter(obj => {
+				elem = data.filter(function(obj) {
 					return obj.id === evt.params.data.id
 				});
 				if( !elem.length || !elem[0] || typeof elem[0].element == 'undefined' ) {
@@ -402,7 +400,7 @@
 					// Support for getting query values from an existing field in the form
 					var dsource_copy = data_source;
 					var terms = dsource_copy.split( "&" );
-					terms.forEach( element => {
+					terms.forEach( function(element) {
 						var subTerms = element.split( "=" );
 						var matches = subTerms[1].match( /\[(.*?)\]/ );
 						if ( matches ) {
@@ -421,11 +419,21 @@
 				if (data.pfautocomplete !== undefined) {
 					$( '#loading-' + input_id ).hide();
 					data.pfautocomplete.forEach( function(item) {
-						item.id = item.title;
 						if (item.displaytitle !== undefined) {
-							item.text = item.displaytitle;
+							var displayTitle;
+							if (item.title === item.displaytitle) {
+								displayTitle = item.title;
+							} else {
+								var containsTitleInParentheses = item.displaytitle.indexOf("(" + item.title + ")") !== -1;
+								displayTitle = containsTitleInParentheses
+									? item.displaytitle
+									: item.displaytitle + " (" + item.title + ")";
+							}
+							item.text = displayTitle;
+							item.id = displayTitle
 						} else {
 							item.text = item.title;
+							item.id = item.title;
 						}
 					});
 					return {results: data.pfautocomplete};

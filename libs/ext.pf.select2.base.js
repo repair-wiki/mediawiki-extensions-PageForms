@@ -17,7 +17,6 @@
 	/**
 	 * Inheritance class for the pf.select2 constructor
 	 *
-	 *
 	 * @class
 	 */
 	pf.select2 = pf.select2 || {};
@@ -95,7 +94,7 @@
 						}
 						if ( rawValue !== '' ) {
 							$input.val(rawValue).trigger("change");
-                                                }
+						}
 					}
 				});
 				element.on( "change", this.onChange );

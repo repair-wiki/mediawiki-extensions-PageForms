@@ -11,6 +11,8 @@ use MediaWiki\Linker\LinkRenderer;
 use MediaWiki\Linker\LinkTarget;
 use MediaWiki\MediaWikiServices;
 use MediaWiki\Revision\RevisionRecord;
+use Wikimedia\Rdbms\DBConnRef;
+use Wikimedia\Rdbms\IDatabase;
 
 class PFUtils {
 
@@ -91,7 +93,9 @@ class PFUtils {
 		if ( $namespace !== '' ) {
 			$namespace .= ':';
 		}
-		if ( self::isCapitalized( $title->getNamespace() ) ) {
+		$isCapitalized = MediaWikiServices::getInstance()->getNamespaceInfo()
+			->isCapitalized( $title->getNamespace() );
+		if ( $isCapitalized ) {
 			return $namespace . self::getContLang()->ucfirst( $title->getPartialURL() );
 		} else {
 			return $namespace . $title->getPartialURL();
@@ -105,20 +109,10 @@ class PFUtils {
 	 * @return string|null
 	 */
 	public static function getPageText( $title, $audience = RevisionRecord::FOR_PUBLIC ) {
-		if ( method_exists( MediaWikiServices::class, 'getWikiPageFactory' ) ) {
-			// MW 1.36+
-			$wikiPage = MediaWikiServices::getInstance()->getWikiPageFactory()->newFromTitle( $title );
-		} else {
-			$wikiPage = new WikiPage( $title );
-		}
+		$wikiPage = MediaWikiServices::getInstance()->getWikiPageFactory()->newFromTitle( $title );
 		$content = $wikiPage->getContent( $audience );
 		if ( $content instanceof TextContent ) {
-			// Since MW 1.33
-			if ( method_exists( $content, 'getText' ) ) {
-				return $content->getText();
-			} else {
-				return $content->getNativeData();
-			}
+			return $content->getText();
 		} else {
 			return null;
 		}
@@ -199,12 +193,7 @@ END;
 		// @TODO - add this in at some point.
 		//$form_body .= Html::hidden( 'editRevId', $edit_rev_id );
 
-		if ( method_exists( $user, 'isRegistered' ) ) {
-			// MW 1.34+
-			$userIsRegistered = $user->isRegistered();
-		} else {
-			$userIsRegistered = $user->isLoggedIn();
-		}
+		$userIsRegistered = $user->isRegistered();
 		if ( $userIsRegistered ) {
 			$edit_token = $user->getEditToken();
 		} else {
@@ -226,16 +215,18 @@ END;
 			$form_body
 		);
 
-		$text .= <<<END
-	<script type="text/javascript">
+		$script = <<<END
 	window.onload = function() {
 		document.editform.submit();
 	}
-	</script>
 
 END;
+
+		$nonce = RequestContext::getMain()->getOutput()->getCSP()->getNonce();
+		$text .= Html::inlineScript( $script, $nonce );
+
 		// @TODO - remove this hook? It seems useless.
-		Hooks::run( 'PageForms::PrintRedirectForm', [ $is_save, !$is_save, false, &$text ] );
+		MediaWikiServices::getInstance()->getHookContainer()->run( 'PageForms::PrintRedirectForm', [ $is_save, !$is_save, false, &$text ] );
 		return $text;
 	}
 
@@ -275,7 +266,7 @@ END;
 			'ext.pageforms.checkboxes',
 			'ext.pageforms.select2',
 			'ext.pageforms.rating',
-			'ext.pageforms.fancybox',
+			'ext.pageforms.popupformedit',
 			'ext.pageforms.fullcalendar',
 			'jquery.makeCollapsible'
 		];
@@ -286,7 +277,6 @@ END;
 			"ext.pageforms.checkboxes.styles",
 			'ext.pageforms.select2.styles',
 			'ext.pageforms.rating.styles',
-			'ext.pageforms.fancybox.styles',
 			"ext.pageforms.forminput.styles"
 		];
 
@@ -298,7 +288,7 @@ END;
 		$output->addModuleStyles( $mainModuleStyles );
 
 		$otherModules = [];
-		Hooks::run( 'PageForms::AddRLModules', [ &$otherModules ] );
+		MediaWikiServices::getInstance()->getHookContainer()->run( 'PageForms::AddRLModules', [ &$otherModules ] );
 		// @phan-suppress-next-line PhanEmptyForeach
 		foreach ( $otherModules as $rlModule ) {
 			$output->addModules( $rlModule );
@@ -310,7 +300,7 @@ END;
 	 * @return string[]
 	 */
 	public static function getAllForms() {
-		$dbr = wfGetDB( DB_REPLICA );
+		$dbr = self::getReadDB();
 		$res = $dbr->select( 'page',
 			'page_title',
 			[ 'page_namespace' => PF_NS_FORM,
@@ -327,12 +317,6 @@ END;
 			throw new MWException( wfMessage( 'pf-noforms-error' )->parse() );
 		}
 		return $form_names;
-	}
-
-	public static function getFormDropdownLabel() {
-		$namespaceStrings = self::getContLang()->getNamespaces();
-		$formNSString = $namespaceStrings[PF_NS_FORM];
-		return $formNSString . wfMessage( 'colon-separator' )->escaped();
 	}
 
 	/**
@@ -398,6 +382,8 @@ END;
 		// https://www.regular-expressions.info/recurse.html
 		$pattern = '/{{(?>[^{}]|(?R))*?}}/';
 		// needed to fix highlighting - <?
+		// Remove HTML comments
+		$str = preg_replace( '/<!--.*?-->/s', '', $str );
 		$str = preg_replace_callback( $pattern, static function ( $match ) {
 			$hasPipe = strpos( $match[0], '|' );
 			return $hasPipe ? str_replace( "|", "\1", $match[0] ) : $match[0];
@@ -473,29 +459,44 @@ END;
 		return false;
 	}
 
-	public static function isCapitalized( $index ) {
-		if ( class_exists( NamespaceInfo::class ) ) {
-			// MW 1.34+
-			return MediaWikiServices::getInstance()
-				->getNamespaceInfo()
-				->isCapitalized( $index );
-		} else {
-			return MWNamespace::isCapitalized( $index );
-		}
-	}
-
 	public static function getCanonicalName( $index ) {
-		if ( class_exists( NamespaceInfo::class ) ) {
-			// MW 1.34+
-			return MediaWikiServices::getInstance()
-				->getNamespaceInfo()
-				->getCanonicalName( $index );
-		} else {
-			return MWNamespace::getCanonicalIndex( $index );
-		}
+		return MediaWikiServices::getInstance()
+			->getNamespaceInfo()
+			->getCanonicalName( $index );
 	}
 
 	public static function isTranslateEnabled() {
 		return ExtensionRegistry::getInstance()->isLoaded( 'Translate' );
+	}
+
+	public static function getCargoFieldDescription( $cargoTable, $cargoField ) {
+		try {
+			$tableSchemas = CargoUtils::getTableSchemas( [ $cargoTable ] );
+		} catch ( MWException $e ) {
+			return null;
+		}
+		if ( !array_key_exists( $cargoTable, $tableSchemas ) ) {
+			return null;
+		}
+		$tableSchema = $tableSchemas[$cargoTable];
+		return $tableSchema->mFieldDescriptions[$cargoField] ?? null;
+	}
+
+	/**
+	 * Provides database for read access
+	 *
+	 * @return IDatabase|DBConnRef
+	 */
+	public static function getReadDB() {
+		$lbFactory = MediaWikiServices::getInstance()->getDBLoadBalancerFactory();
+		if ( method_exists( $lbFactory, 'getReplicaDatabase' ) ) {
+			// MW 1.40+
+			// The correct type \Wikimedia\Rdbms\IReadableDatabase cannot be used
+			// as the return type, as that class only exists since 1.40.
+			// @phan-suppress-next-line PhanTypeMismatchReturnSuperType
+			return $lbFactory->getReplicaDatabase();
+		} else {
+			return $lbFactory->getMainLB()->getConnection( DB_REPLICA );
+		}
 	}
 }

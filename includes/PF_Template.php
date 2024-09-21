@@ -50,14 +50,7 @@ class PFTemplate {
 		if ( $templateTitle === null ) {
 			return;
 		}
-		$services = MediaWikiServices::getInstance();
-		if ( method_exists( $services, 'getPageProps' ) ) {
-			// MW 1.36+
-			$pageProps = $services->getPageProps();
-		} else {
-			$pageProps = PageProps::getInstance();
-		}
-		$properties = $pageProps->getProperties(
+		$properties = MediaWikiServices::getInstance()->getPageProps()->getProperties(
 			[ $templateTitle ], [ 'PageFormsTemplateParams' ]
 		);
 		if ( count( $properties ) == 0 ) {
@@ -83,7 +76,7 @@ class PFTemplate {
 			return;
 		}
 
-		$templateText = PFUtils::getPageText( $templateTitle );
+		$templateText = PFUtils::getPageText( $templateTitle ) ?? '';
 		// Ignore 'noinclude' sections and 'includeonly' tags.
 		$templateText = StringUtils::delimiterReplace( '<noinclude>', '</noinclude>', '', $templateText );
 		$this->mTemplateText = strtr( $templateText, [ '<includeonly>' => '', '</includeonly>' => '' ] );
@@ -249,7 +242,7 @@ class PFTemplate {
 
 		// First, get the table name, and fields, declared for this
 		// template, if any.
-		list( $tableName, $tableSchema ) = $this->getCargoTableAndSchema( $templateTitle );
+		[ $tableName, $tableSchema ] = $this->getCargoTableAndSchema( $templateTitle );
 		if ( $tableName == null ) {
 			$fieldDescriptions = [];
 		} else {
@@ -372,7 +365,7 @@ class PFTemplate {
 		if ( $tableSchemaString === null ) {
 			// There's no declared table - but see if there's an
 			// attached table.
-			list( $tableName, $isDeclared ) = CargoUtils::getTableNameForTemplate( $templateTitle );
+			[ $tableName, $isDeclared ] = CargoUtils::getTableNameForTemplate( $templateTitle );
 			if ( $tableName == null ) {
 				return [ null, null ];
 			}
@@ -480,7 +473,7 @@ class PFTemplate {
 	public function createText() {
 		// Avoid PHP 7.1 warning from passing $this by reference
 		$template = $this;
-		Hooks::run( 'PageForms::CreateTemplateText', [ &$template ] );
+		MediaWikiServices::getInstance()->getHookContainer()->run( 'PageForms::CreateTemplateText', [ &$template ] );
 		// Check whether the user needs the full wikitext instead of #template_display
 		if ( $this->mFullWikiText ) {
 			$templateHeader = wfMessage( 'pf_template_docu', $this->mTemplateName )->inContentLanguage()->text();
@@ -581,9 +574,9 @@ END;
 
 		// Topmost part of table depends on format.
 		if ( !$this->mTemplateFormat ) {
-			$this->mTemplateFormat = 'standard';
+			$this->mTemplateFormat = 'table';
 		}
-		if ( $this->mTemplateFormat == 'standard' ) {
+		if ( $this->mTemplateFormat == 'table' ) {
 			$tableText = '{| class="wikitable"' . "\n";
 		} elseif ( $this->mTemplateFormat == 'infobox' ) {
 			// A CSS style can't be used, unfortunately, since most
@@ -622,7 +615,7 @@ END;
 
 			// Header/field label column
 			if ( $fieldDisplay === null ) {
-				if ( $this->mTemplateFormat == 'standard' || $this->mTemplateFormat == 'infobox' ) {
+				if ( $this->mTemplateFormat == 'table' || $this->mTemplateFormat == 'infobox' ) {
 					if ( $i > 0 ) {
 						$tableText .= "|-\n";
 					}
@@ -637,7 +630,7 @@ END;
 					$tableText .= "\n";
 				}
 				$tableText .= '{{#if:' . $fieldParam . '|';
-				if ( $this->mTemplateFormat == 'standard' || $this->mTemplateFormat == 'infobox' ) {
+				if ( $this->mTemplateFormat == 'table' || $this->mTemplateFormat == 'infobox' ) {
 					if ( $i > 0 ) {
 						$tableText .= "\n{{!}}-\n";
 					}
@@ -654,7 +647,7 @@ END;
 				// If it's 'hidden', do nothing
 			}
 			// Value column
-			if ( $this->mTemplateFormat == 'standard' || $this->mTemplateFormat == 'infobox' ) {
+			if ( $this->mTemplateFormat == 'table' || $this->mTemplateFormat == 'infobox' ) {
 				if ( $fieldDisplay == 'hidden' ) {
 				} elseif ( $fieldDisplay == 'nonempty' ) {
 					// $tableText .= "{{!}} ";
@@ -702,7 +695,7 @@ END;
 					$setText .= $fieldProperty . '=' . $fieldString . '|';
 				}
 			} elseif ( $fieldDisplay == 'nonempty' ) {
-				if ( $this->mTemplateFormat == 'standard' || $this->mTemplateFormat == 'infobox' ) {
+				if ( $this->mTemplateFormat == 'table' || $this->mTemplateFormat == 'infobox' ) {
 					$tableText .= '{{!}} ';
 				}
 				$tableText .= $this->createTextForField( $field ) . "\n}}\n";
@@ -714,7 +707,7 @@ END;
 		// Add an inline query to the output text, for
 		// aggregation, if a property was specified.
 		if ( $this->mAggregatingProperty !== null && $this->mAggregatingProperty !== '' ) {
-			if ( $this->mTemplateFormat == 'standard' || $this->mTemplateFormat == 'infobox' ) {
+			if ( $this->mTemplateFormat == 'table' || $this->mTemplateFormat == 'infobox' ) {
 				if ( count( $this->mTemplateFields ) > 0 ) {
 					$tableText .= "|-\n";
 				}
@@ -729,14 +722,14 @@ END;
 			}
 			$tableText .= "{{#ask:[[" . $this->mAggregatingProperty . "::{{SUBJECTPAGENAME}}]]|format=list}}\n";
 		}
-		if ( $this->mTemplateFormat == 'standard' || $this->mTemplateFormat == 'infobox' ) {
+		if ( $this->mTemplateFormat == 'table' || $this->mTemplateFormat == 'infobox' ) {
 			$tableText .= "|}";
 		}
 		// Leave out newlines if there's an internal property
 		// set here (which would mean that there are meant to be
 		// multiple instances of this template.)
 		if ( $internalObjText === null ) {
-			if ( $this->mTemplateFormat == 'standard' || $this->mTemplateFormat == 'infobox' ) {
+			if ( $this->mTemplateFormat == 'table' || $this->mTemplateFormat == 'infobox' ) {
 				$tableText .= "\n";
 			}
 		} else {
@@ -764,7 +757,8 @@ END;
 	function createTextForField( $field ) {
 		$text = '';
 		$fieldStart = $this->mFieldStart;
-		Hooks::run( 'PageForms::TemplateFieldStart', [ $field, &$fieldStart ] );
+		$hookContainer = MediaWikiServices::getInstance()->getHookContainer();
+		$hookContainer->run( 'PageForms::TemplateFieldStart', [ $field, &$fieldStart ] );
 		if ( $fieldStart != '' ) {
 			$text .= "$fieldStart ";
 		}
@@ -773,7 +767,7 @@ END;
 		$text .= $field->createText( $cargoInUse );
 
 		$fieldEnd = $this->mFieldEnd;
-		Hooks::run( 'PageForms::TemplateFieldEnd', [ $field, &$fieldEnd ] );
+		$hookContainer->run( 'PageForms::TemplateFieldEnd', [ $field, &$fieldEnd ] );
 		if ( $fieldEnd != '' ) {
 			$text .= " $fieldEnd";
 		}

@@ -20,11 +20,17 @@ class PFRunQuery extends IncludableSpecialPage {
 		if ( !$this->including() ) {
 			$this->setHeaders();
 		}
-		$this->getOutput()->enableOOUI();
 
 		$form_name = $this->including() ? $query : $this->getRequest()->getVal( 'form', $query );
+		if ( $form_name == '' ) {
+			$text = Html::element( 'p', [ 'class' => 'error' ], $this->msg( 'pf_runquery_badurl' )->text() ) . "\n";
+			$this->getOutput()->addHTML( $text );
+			return;
+		}
+
 		$form_name = str_replace( '_', ' ', $form_name );
 
+		$this->getOutput()->enableOOUI();
 		$this->printPage( $form_name, $this->including() );
 	}
 
@@ -46,12 +52,8 @@ class PFRunQuery extends IncludableSpecialPage {
 		$form_title = Title::makeTitleSafe( PF_NS_FORM, $form_name );
 
 		if ( !$form_title || !$form_title->exists() ) {
-			if ( $form_name === '' ) {
-				$text = Html::element( 'p', [ 'class' => 'error' ], $this->msg( 'pf_runquery_badurl' )->text() ) . "\n";
-			} else {
-				$text = Html::rawElement( 'p', [ 'class' => 'error' ],
-					$this->msg( 'pf_formstart_badform', PFUtils::linkText( PF_NS_FORM, $form_name ) )->parse() ) . "\n";
-			}
+			$text = Html::rawElement( 'p', [ 'class' => 'error' ],
+				$this->msg( 'pf_formstart_badform', PFUtils::linkText( PF_NS_FORM, $form_name ) )->parse() ) . "\n";
 			$out->addHTML( $text );
 			return;
 		}
@@ -84,10 +86,11 @@ class PFRunQuery extends IncludableSpecialPage {
 			$out->setArticleBodyOnly( true );
 		}
 
-		list( $form_text, $data_text, $form_page_title ) =
+		$form_context = $embedded ? PFFormPrinter::CONTEXT_EMBEDDED_QUERY : PFFormPrinter::CONTEXT_QUERY;
+		[ $form_text, $data_text, $form_page_title ] =
 			$wgPageFormsFormPrinter->formHTML(
 				$form_definition, $form_submitted, false, $form_title->getArticleID(),
-				$content, null, null, true, $embedded, false, [], $user
+				$content, null, null, $form_context, [], $user
 			);
 		$text = "";
 
@@ -106,8 +109,8 @@ class PFRunQuery extends IncludableSpecialPage {
 				$out->addHeadItem( $key, "\t\t" . $item . "\n" );
 			}
 
-			PFUtils::getParser()->mOptions = ParserOptions::newFromUser( $user );
-			$resultsText = PFUtils::getParser()->parse( $data_text, $this->getPageTitle(), PFUtils::getParser()->mOptions, true, false )->getText();
+			PFUtils::getParser()->setOptions( ParserOptions::newFromUser( $user ) );
+			$resultsText = PFUtils::getParser()->parse( $data_text, $this->getPageTitle(), PFUtils::getParser()->getOptions(), true, false )->getText();
 		}
 
 		// Get the full text of the form.
@@ -205,6 +208,16 @@ END;
 				$out->setPageTitle( $s );
 			}
 		}
+	}
+
+	/**
+	 * Overrides base maxIncludeCacheTime to make it configurable
+	 * for Special:RunQuery embed pages, see base method for details
+	 * @return int
+	 */
+	public function maxIncludeCacheTime() {
+		global $wgPageFormsEmbedQueryCacheTTL;
+		return $wgPageFormsEmbedQueryCacheTTL;
 	}
 
 	protected function getGroupName() {

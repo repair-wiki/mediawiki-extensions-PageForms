@@ -20,6 +20,10 @@ class PFFormField {
 	 * @var PFTemplateField
 	 */
 	public $template_field;
+	/**
+	 * @var array
+	 */
+	public static $mappedValuesCache = [];
 	private $mInputType;
 	private $mIsMandatory;
 	private $mIsHidden;
@@ -303,7 +307,7 @@ class PFFormField {
 						}
 						$option_div_pair = explode( '=>', $val, 2 );
 						if ( count( $option_div_pair ) > 1 ) {
-							$option = trim( $parser->recursiveTagParse( $option_div_pair[0] ) );
+							$option = PFFormPrinter::getParsedValue( $parser, trim( $option_div_pair[0] ) );
 							$div_id = $option_div_pair[1];
 							if ( array_key_exists( $div_id, $show_on_select ) ) {
 								$show_on_select[$div_id][] = $option;
@@ -317,10 +321,10 @@ class PFFormField {
 				} elseif ( $sub_components[0] == 'values' ) {
 					// Handle this one only after
 					// 'delimiter' has also been set.
-					$values = $parser->recursiveTagParse( $sub_components[1] );
+					$values = PFFormPrinter::getParsedValue( $parser, $sub_components[1] );
 				} elseif ( $sub_components[0] == 'values from property' ) {
-					$propertyName = $sub_components[1];
-					$f->mPossibleValues = PFValuesUtils::getAllValuesForProperty( $propertyName );
+					$valuesSourceType = 'property';
+					$valuesSource = $sub_components[1];
 				} elseif ( $sub_components[0] == 'values from wikidata' ) {
 					$valuesSourceType = 'wikidata';
 					$valuesSource = urlencode( $sub_components[1] );
@@ -328,7 +332,7 @@ class PFFormField {
 					$valuesSourceType = 'query';
 					$valuesSource = $sub_components[1];
 				} elseif ( $sub_components[0] == 'values from category' ) {
-					$valuesSource = $parser->recursiveTagParse( $sub_components[1] );
+					$valuesSource = PFFormPrinter::getParsedValue( $parser, $sub_components[1] );
 					global $wgCapitalLinks;
 					if ( $wgCapitalLinks ) {
 						$valuesSource = ucfirst( $valuesSource );
@@ -336,22 +340,22 @@ class PFFormField {
 					$valuesSourceType = 'category';
 				} elseif ( $sub_components[0] == 'values from concept' ) {
 					$valuesSourceType = 'concept';
-					$valuesSource = $parser->recursiveTagParse( $sub_components[1] );
+					$valuesSource = PFFormPrinter::getParsedValue( $parser, $sub_components[1] );
 				} elseif ( $sub_components[0] == 'values from namespace' ) {
 					$valuesSourceType = 'namespace';
-					$valuesSource = $parser->recursiveTagParse( $sub_components[1] );
+					$valuesSource = PFFormPrinter::getParsedValue( $parser, $sub_components[1] );
 				} elseif ( $sub_components[0] == 'values dependent on' ) {
 					global $wgPageFormsDependentFields;
 					$wgPageFormsDependentFields[] = [ $sub_components[1], $fullFieldName ];
 				} elseif ( $sub_components[0] == 'unique for category' ) {
 					$f->mFieldArgs['unique'] = true;
-					$f->mFieldArgs['unique_for_category'] = $parser->recursiveTagParse( $sub_components[1] );
+					$f->mFieldArgs['unique_for_category'] = PFFormPrinter::getParsedValue( $parser, $sub_components[1] );
 				} elseif ( $sub_components[0] == 'unique for namespace' ) {
 					$f->mFieldArgs['unique'] = true;
-					$f->mFieldArgs['unique_for_namespace'] = $parser->recursiveTagParse( $sub_components[1] );
+					$f->mFieldArgs['unique_for_namespace'] = PFFormPrinter::getParsedValue( $parser, $sub_components[1] );
 				} elseif ( $sub_components[0] == 'unique for concept' ) {
 					$f->mFieldArgs['unique'] = true;
-					$f->mFieldArgs['unique_for_concept'] = $parser->recursiveTagParse( $sub_components[1] );
+					$f->mFieldArgs['unique_for_concept'] = PFFormPrinter::getParsedValue( $parser, $sub_components[1] );
 				} elseif ( $sub_components[0] == 'property' ) {
 					$semantic_property = $sub_components[1];
 				} elseif ( $sub_components[0] == 'cargo table' ) {
@@ -359,7 +363,7 @@ class PFFormField {
 				} elseif ( $sub_components[0] == 'cargo field' ) {
 					$cargo_field = $sub_components[1];
 				} elseif ( $sub_components[0] == 'cargo where' ) {
-					$cargo_where = $sub_components[1];
+					$cargo_where = PFFormPrinter::getParsedValue( $parser, $sub_components[1] );
 				} elseif ( $sub_components[0] == 'default filename' ) {
 					global $wgTitle;
 					$page_name = $wgTitle->getText();
@@ -375,15 +379,10 @@ class PFFormField {
 					$default_filename = str_replace( '<page name>', $page_name, $sub_components[1] );
 					// Parse value, so default filename can
 					// include parser functions.
-					$default_filename = $parser->recursiveTagParse( $default_filename );
+					$default_filename = PFFormPrinter::getParsedValue( $parser, $default_filename );
 					$f->mFieldArgs['default filename'] = $default_filename;
 				} elseif ( $sub_components[0] == 'restricted' ) {
-					if ( method_exists( MediaWikiServices::class, 'getUserGroupManager' ) ) {
-						// MediaWiki >= 1.35
-						$effectiveGroups = MediaWikiServices::getInstance()->getUserGroupManager()->getUserEffectiveGroups( $user );
-					} else {
-						$effectiveGroups = $user->getEffectiveGroups();
-					}
+					$effectiveGroups = MediaWikiServices::getInstance()->getUserGroupManager()->getUserEffectiveGroups( $user );
 					$f->mIsRestricted = !array_intersect(
 						$effectiveGroups, array_map( 'trim', explode( ',', $sub_components[1] ) )
 					);
@@ -391,13 +390,12 @@ class PFFormField {
 			}
 		}
 		// end for
-		if ( $valuesSourceType !== null && ( $valuesSourceType !== 'wikidata' || ( $f->mInputType !== 'combobox' &&
-		$f->mInputType !== 'tokens' ) ) ) {
-			$f->mPossibleValues = PFValuesUtils::getAutocompleteValues( $valuesSource, $valuesSourceType );
-			if ( in_array( $valuesSourceType, [ 'category', 'namespace', 'concept' ] ) ) {
-				global $wgPageFormsUseDisplayTitle;
-				$f->mUseDisplayTitle = $wgPageFormsUseDisplayTitle;
-			}
+
+		if ( in_array( $valuesSourceType, [ 'category', 'namespace', 'concept' ] ) ) {
+			global $wgPageFormsUseDisplayTitle;
+			$f->mUseDisplayTitle = $wgPageFormsUseDisplayTitle;
+		} else {
+			$f->mUseDisplayTitle = false;
 		}
 
 		if ( !array_key_exists( 'delimiter', $f->mFieldArgs ) ) {
@@ -409,84 +407,6 @@ class PFFormField {
 				$f->mIsList = true;
 			}
 		}
-		$delimiter = $f->mFieldArgs['delimiter'];
-
-		// If the 'values' parameter was set, separate it based on the
-		// 'delimiter' parameter, if any.
-		if ( $values != null ) {
-			// Remove whitespaces, and un-escape characters
-			$valuesArray = array_map( 'trim', explode( $delimiter, $values ) );
-			$f->mPossibleValues = array_map( 'htmlspecialchars_decode', $valuesArray );
-		}
-
-		// If we're using Cargo, there's no equivalent for "values from
-		// property" - instead, we just always get the values if a
-		// field and table have been specified.
-		if ( $f->mPossibleValues === null && defined( 'CARGO_VERSION' ) && $cargo_table != null && $cargo_field != null ) {
-			// We only want the non-null values. Ideally this could
-			// be done by calling getValuesForCargoField() with
-			// an "IS NOT NULL" clause, but unfortunately that fails
-			// for array/list fields.
-			// Instead of getting involved with all that, we'll just
-			// remove the null/blank values afterward.
-			$cargoValues = PFValuesUtils::getAllValuesForCargoField( $cargo_table, $cargo_field );
-			$f->mPossibleValues = array_filter( $cargoValues, 'strlen' );
-		}
-
-		if ( defined( 'CARGO_VERSION' ) && $cargo_where != null ) {
-			if ( $cargo_table == null || $cargo_field == null ) {
-				$fullCargoField = $f->template_field->getFullCargoField();
-				$table_and_field = explode( '|', $fullCargoField );
-				$cargo_table = $table_and_field[0];
-				$cargo_field = $table_and_field[1];
-			}
-			$cargoValues = PFValuesUtils::getValuesForCargoField( $cargo_table, $cargo_field, $cargo_where );
-			$f->mPossibleValues = array_filter( $cargoValues, 'strlen' );
-		}
-
-		if ( $f->mPossibleValues == null ) {
-			$f->mPossibleValues = $f->template_field->getPossibleValues();
-		}
-
-		$mappingType = null;
-		if ( array_key_exists( 'mapping template', $f->mFieldArgs ) ) {
-			$mappingType = 'template';
-		} elseif ( array_key_exists( 'mapping property', $f->mFieldArgs ) ) {
-			$mappingType = 'property';
-		} elseif ( array_key_exists( 'mapping cargo table', $f->mFieldArgs ) &&
-			array_key_exists( 'mapping cargo field', $f->mFieldArgs ) ) {
-			$mappingType = 'cargo field';
-		} elseif ( $f->mUseDisplayTitle ) {
-			$f->mPossibleValues = PFValuesUtils::disambiguateLabels( $f->mPossibleValues );
-		}
-
-		if ( $mappingType !== null && !empty( $f->mPossibleValues ) ) {
-			// If we're going to be mapping values, we need to have
-			// the exact page name - and if these values come from
-			// "values from namespace", the namespace prefix was
-			// not included, so we need to add it now.
-			if ( $valuesSourceType == 'namespace' && $valuesSource != '' && $valuesSource != 'Main' ) {
-				foreach ( $f->mPossibleValues as $index => &$value ) {
-					$value = $valuesSource . ':' . $value;
-				}
-				// Has to be set to false to not mess up the
-				// handling.
-				$f->mUseDisplayTitle = false;
-			}
-
-			$f->setMappedValues( $mappingType );
-		}
-
-		if ( $template_in_form->allowsMultiple() ) {
-			$f->mFieldArgs['part_of_multiple'] = true;
-		}
-		if ( count( $show_on_select ) > 0 ) {
-			$f->mFieldArgs['show on select'] = $show_on_select;
-		}
-
-		// Disable this field if either the whole form is disabled, or
-		// it's a restricted field and user doesn't have sysop privileges.
-		$f->mIsDisabled = ( $form_is_disabled || $f->mIsRestricted );
 
 		// Do some data storage specific to the Semantic MediaWiki and
 		// Cargo extensions.
@@ -521,6 +441,53 @@ class PFFormField {
 			}
 		}
 
+		$f->setPossibleValues( $valuesSourceType, $valuesSource, $values, $cargo_table, $cargo_field, $cargo_where );
+
+		$mappingType = PFMappingUtils::getMappingType( $f->mFieldArgs, $f->mUseDisplayTitle );
+		if ( $mappingType !== null && !empty( $f->mPossibleValues ) ) {
+			// If we're going to be mapping values, we need to have
+			// the exact page name - and if these values come from
+			// "values from namespace", the namespace prefix was
+			// not included, so we need to add it now.
+			if ( $valuesSourceType == 'namespace' ) {
+				if ( $valuesSource != '' && $valuesSource != 'Main' ) {
+					foreach ( $f->mPossibleValues as $index => &$value ) {
+						$value = $valuesSource . ':' . $value;
+					}
+				}
+				// Has to be set to false to not mess up the
+				// handling.
+				$f->mUseDisplayTitle = false;
+			}
+
+			$mappedValuesKey = json_encode( $f->mFieldArgs ) . $mappingType;
+			if ( array_key_exists( $mappedValuesKey, self::$mappedValuesCache ) ) {
+				$f->mPossibleValues = self::$mappedValuesCache[$mappedValuesKey];
+			} else {
+				$f->mPossibleValues = PFMappingUtils::getMappedValuesForInput( $f->mPossibleValues, $f->mFieldArgs );
+				self::$mappedValuesCache[$mappedValuesKey] = $f->mPossibleValues;
+			}
+
+			// If the number of possible values is greater than the max values to retrieve, set reverselookup to true.
+			// This enforces the use of the remote autocomplete feature for larger fields and prevents
+			// the form from loading slowly.
+			if ( count( $f->mPossibleValues ) >= PFValuesUtils::getMaxValuesToRetrieve() ) {
+				$f->setFieldArg( 'reverselookup', true );
+			}
+
+		}
+
+		if ( $template_in_form->allowsMultiple() ) {
+			$f->mFieldArgs['part_of_multiple'] = true;
+		}
+		if ( count( $show_on_select ) > 0 ) {
+			$f->mFieldArgs['show on select'] = $show_on_select;
+		}
+
+		// Disable this field if either the whole form is disabled, or
+		// it's a restricted field and user doesn't have sysop privileges.
+		$f->mIsDisabled = ( $form_is_disabled || $f->mIsRestricted );
+
 		if ( $template_name === null || $template_name === '' ) {
 			$f->mInputName = $field_name;
 		} elseif ( $template_in_form->allowsMultiple() ) {
@@ -533,6 +500,66 @@ class PFFormField {
 		}
 
 		return $f;
+	}
+
+	private function setPossibleValues( $valuesSourceType, $valuesSource, $values, $cargo_table, $cargo_field, $cargo_where ) {
+		// Set the $mPossibleValues field, using the following logic:
+		// - If "values" was set in the form definition, use that.
+		// - If any "values from ..." parameter was set, use that.
+		// - If "cargo where" was set, use it, if a Cargo table and field have also been defined.
+		// - If "cargo table" and "cargo field" were set, then:
+		//     - If there are "allowed values" for that field use those.
+		//     - Otherwise, use that field's existing values.
+		// - Otherwise, use the possible values defined within the corresponding template field, if any.
+
+		if ( $values != null ) {
+			$delimiter = $this->mFieldArgs['delimiter'];
+			// Remove whitespaces, and un-escape characters
+			$valuesArray = array_map( 'trim', explode( $delimiter, $values ) );
+			$this->mPossibleValues = array_map( 'htmlspecialchars_decode', $valuesArray );
+			return;
+		}
+
+		if ( $valuesSourceType !== null && ( $valuesSourceType !== 'wikidata' || ( $this->mInputType !== 'combobox' &&
+		$this->mInputType !== 'tokens' ) ) ) {
+			$this->mPossibleValues = PFValuesUtils::getAutocompleteValues( $valuesSource, $valuesSourceType );
+			return;
+		}
+
+		if ( defined( 'CARGO_VERSION' ) && $cargo_where != null ) {
+			if ( $cargo_table == null || $cargo_field == null ) {
+				$fullCargoField = $this->template_field->getFullCargoField();
+				$table_and_field = explode( '|', $fullCargoField );
+				$cargo_table = $table_and_field[0];
+				$cargo_field = $table_and_field[1];
+			}
+			$cargoValues = PFValuesUtils::getValuesForCargoField( $cargo_table, $cargo_field, $cargo_where );
+			$this->mPossibleValues = array_filter( $cargoValues, 'strlen' );
+			return;
+		}
+
+		// If we're using Cargo, there's no equivalent for "values from
+		// property" - instead, we just always get the values if a
+		// field and table have been specified.
+		if ( defined( 'CARGO_VERSION' ) && $cargo_table != null && $cargo_field != null ) {
+			// If there are "allowed values" defined, use those.
+			$fieldDesc = PFUtils::getCargoFieldDescription( $cargo_table, $cargo_field );
+			if ( $fieldDesc !== null && $fieldDesc->mAllowedValues !== null ) {
+				$this->mPossibleValues = $fieldDesc->mAllowedValues;
+				return;
+			}
+			// We only want the non-null values. Ideally this could
+			// be done by calling getValuesForCargoField() with
+			// an "IS NOT NULL" clause, but unfortunately that fails
+			// for array/list fields.
+			// Instead of getting involved with all that, we'll just
+			// remove the null/blank values afterward.
+			$cargoValues = PFValuesUtils::getAllValuesForCargoField( $cargo_table, $cargo_field );
+			$this->mPossibleValues = array_filter( $cargoValues, 'strlen' );
+			return;
+		}
+
+		$this->mPossibleValues = $this->template_field->getPossibleValues();
 	}
 
 	function cleanupTranslateTags( &$value ) {
@@ -568,7 +595,7 @@ class PFFormField {
 		}
 	}
 
-	function getCurrentValue( $template_instance_query_values, $form_submitted, $source_is_page, $all_instances_printed, &$val_modifier = null ) {
+	function getCurrentValue( $template_instance_query_values, $form_submitted, $source_is_page, $all_instances_printed, &$val_modifier = null, $is_autoedit = false ) {
 		// Get the value from the request, if
 		// it's there, and if it's not an array.
 		$field_name = $this->template_field->getFieldName();
@@ -633,15 +660,30 @@ class PFFormField {
 							if ( $key === 'is_list' ) {
 								$cur_values[$key] = $val;
 							} else {
-								$cur_values[] = $this->labelToValue( $val );
+								$cur_values[] = PFValuesUtils::labelToValue(
+									$val,
+									$this->mPossibleValues
+								);
 							}
 						}
+
+						// This part is needed to map the values back to the original page titles.
+						// The form is submitted with "displaytitle (title)" format, so we need to map it back.
+						if ( $this->hasFieldArg( 'remote autocompletion' ) ) {
+							$hasList = $cur_values['is_list'] ?? false;
+							// The key containing the actual title of the page
+							$cur_values = array_keys( PFMappingUtils::getLabelsForTitles( $cur_values, true ) );
+							if ( $hasList ) {
+								$cur_values['is_list'] = $hasList;
+							}
+						}
+
 					} else {
 						foreach ( $field_query_val as $key => $val ) {
 							$cur_values[$key] = $val;
 						}
 					}
-					return PFFormPrinter::getStringFromPassedInArray( $cur_values, $delimiter );
+					return PFFormPrinter::getStringFromPassedInArray( $cur_values, $delimiter, $is_autoedit );
 				} else {
 					$field_query_val = trim( $field_query_val );
 					if ( $map_field && $this->mPossibleValues !== null ) {
@@ -653,11 +695,11 @@ class PFFormField {
 						if ( $this->mIsList ) {
 							$cur_values = array_map( 'trim', explode( $delimiter, $field_query_val ) );
 							foreach ( $cur_values as $key => $val ) {
-								$cur_values[$key] = $this->labelToValue( $val );
+								$cur_values[$key] = PFValuesUtils::labelToValue( $val, $this->mPossibleValues );
 							}
 							return implode( $delimiter, $cur_values );
 						}
-						return $this->labelToValue( $field_query_val );
+						return PFValuesUtils::labelToValue( $field_query_val, $this->mPossibleValues );
 					}
 					return $field_query_val;
 				}
@@ -690,124 +732,15 @@ class PFFormField {
 		return null;
 	}
 
-	function setMappedValues( $mappingType ) {
-		if ( $mappingType == 'template' ) {
-			$this->setValuesWithMappingTemplate();
-		} elseif ( $mappingType == 'property' ) {
-			$this->setValuesWithMappingProperty();
-		} elseif ( $mappingType == 'cargo field' ) {
-			$this->setValuesWithMappingCargoField();
-		}
-
-		$this->mPossibleValues = PFValuesUtils::disambiguateLabels( $this->mPossibleValues );
-	}
-
-	/**
-	 * Helper function to get an array of labels from an array of values
-	 * given a mapping template.
-	 */
-	function setValuesWithMappingTemplate() {
-		$labels = [];
-		$templateName = $this->mFieldArgs['mapping template'];
-		$title = Title::makeTitleSafe( NS_TEMPLATE, $templateName );
-		$templateExists = $title->exists();
-		foreach ( $this->mPossibleValues as $index => $value ) {
-			if ( $this->mUseDisplayTitle ) {
-				$value = $index;
-			}
-			if ( $templateExists ) {
-				$label = trim( PFUtils::getParser()->recursiveTagParse( '{{' . $templateName .
-					'|' . $value . '}}' ) );
-				if ( $label == '' ) {
-					$labels[$value] = $value;
-				} else {
-					$labels[$value] = $label;
-				}
-			} else {
-				$labels[$value] = $value;
-			}
-		}
-		$this->mPossibleValues = $labels;
-	}
-
-	/**
-	 * Helper function to get an array of labels from an array of values
-	 * given a mapping property.
-	 */
-	function setValuesWithMappingProperty() {
-		$store = PFUtils::getSMWStore();
-		if ( $store == null ) {
-			return;
-		}
-
-		$propertyName = $this->mFieldArgs['mapping property'];
-		$labels = [];
-		foreach ( $this->mPossibleValues as $index => $value ) {
-			if ( $this->mUseDisplayTitle ) {
-				$value = $index;
-			}
-			$labels[$value] = $value;
-			$subject = Title::newFromText( $value );
-			if ( $subject != null ) {
-				$vals = PFValuesUtils::getSMWPropertyValues( $store, $subject, $propertyName );
-				if ( count( $vals ) > 0 ) {
-					$labels[$value] = trim( $vals[0] );
-				}
-			}
-		}
-		$this->mPossibleValues = $labels;
-	}
-
-	/**
-	 * Helper function to get an array of labels from an array of values
-	 * given a mapping Cargo table/field.
-	 */
-	function setValuesWithMappingCargoField() {
-		$labels = [];
-		foreach ( $this->mPossibleValues as $index => $value ) {
-			if ( $this->mUseDisplayTitle ) {
-				$value = $index;
-			}
-			$labels[$value] = $value;
-			if ( $this->hasFieldArg( 'mapping cargo value field' ) ) {
-				$valueField = $this->mFieldArgs['mapping cargo value field'];
-			} else {
-				$valueField = '_pageName';
-			}
-			$vals = PFValuesUtils::getValuesForCargoField(
-				$this->mFieldArgs['mapping cargo table'],
-				$this->mFieldArgs['mapping cargo field'],
-				$valueField . '="' . $value . '"'
-			);
-			if ( count( $vals ) > 0 ) {
-				$labels[$value] = html_entity_decode( trim( $vals[0] ) );
-			}
-		}
-		$this->mPossibleValues = $labels;
-	}
-
-	/**
-	 * Map a label back to a value.
-	 * @param string $label
-	 * @return string
-	 */
-	function labelToValue( $label ) {
-		$value = array_search( $label, $this->mPossibleValues );
-		if ( $value === false ) {
-			return $label;
-		} else {
-			return $value;
-		}
-	}
-
 	/**
 	 * Map a template field value into labels.
 	 * @param string $valueString
 	 * @param string $delimiter
+	 * @param bool $formSubmitted
 	 * @return string|string[]
 	 */
-	public function valueStringToLabels( $valueString, $delimiter ) {
-		if ( strlen( trim( $valueString ) ) === 0 ||
+	public function valueStringToLabels( $valueString, $delimiter, $formSubmitted ) {
+		if ( $valueString === null || trim( $valueString ) === '' ||
 			$this->mPossibleValues === null ) {
 			return $valueString;
 		}
@@ -816,6 +749,14 @@ class PFFormField {
 		} else {
 			$values = [ $valueString ];
 		}
+
+		$maxValues = PFValuesUtils::getMaxValuesToRetrieve();
+		if ( $formSubmitted && ( count( $this->mPossibleValues ) >= $maxValues ) ) {
+			// Remote autocompletion.
+			$mappedValues = PFMappingUtils::getMappedValuesForInput( $values, $this->getFieldArgs() );
+			return array_values( $mappedValues );
+		}
+
 		$labels = [];
 		foreach ( $values as $value ) {
 			if ( $value != '' ) {
@@ -826,11 +767,13 @@ class PFFormField {
 				}
 			}
 		}
-		if ( count( $labels ) > 1 ) {
-			return $labels;
-		} else {
+
+		// Most form input types expect a string, and not an array.
+		if ( count( $labels ) == 1 ) {
 			return $labels[0];
 		}
+
+		return $labels;
 	}
 
 	public function additionalHTMLForInput( $cur_value, $field_name, $template_name ) {
@@ -882,7 +825,7 @@ class PFFormField {
 			if ( $fullCargoField != null ) {
 				// It's inefficient to get these values via
 				// text parsing, but oh well.
-				list( $cargo_table, $cargo_field ) = explode( '|', $fullCargoField, 2 );
+				[ $cargo_table, $cargo_field ] = explode( '|', $fullCargoField, 2 );
 				$text .= Html::hidden( 'input_' . $wgPageFormsFieldNum . '_unique_cargo_table', $cargo_table );
 				$text .= Html::hidden( 'input_' . $wgPageFormsFieldNum . '_unique_cargo_field', $cargo_field );
 			}
@@ -1046,12 +989,12 @@ class PFFormField {
 	function getArgumentsForInputCallCargo( array &$other_args ) {
 		$fullCargoField = $this->template_field->getFullCargoField();
 		if ( $fullCargoField !== null &&
+			array_key_exists( 'cargo where', $other_args ) ) {
+			$fullCargoField .= '|' . $other_args['cargo where'];
+		}
+		if ( $fullCargoField !== null &&
 			!array_key_exists( 'full_cargo_field', $other_args ) ) {
-				if ( array_key_exists( 'cargo where', $other_args ) ) {
-					$other_args['full_cargo_field'] = $fullCargoField . '|' . $other_args['cargo where'];
-				} else {
-					$other_args['full_cargo_field'] = $fullCargoField;
-				}
+			$other_args['full_cargo_field'] = $fullCargoField;
 		}
 
 		if ( $this->template_field->getFieldType() == 'Hierarchy' ) {
@@ -1070,7 +1013,7 @@ class PFFormField {
 					$mapping_cargo_table = $other_args[ 'mapping cargo table' ];
 					$other_args['autocompletion source'] = $mapping_cargo_table . '|' . $mapping_cargo_field;
 				} else {
-					$other_args['autocompletion source'] = $this->template_field->getFullCargoField();
+					$other_args['autocompletion source'] = $fullCargoField;
 				}
 				$other_args['autocomplete field type'] = 'cargo field';
 			}
@@ -1097,10 +1040,8 @@ class PFFormField {
 		} else {
 			$other_args['possible_values'] = $this->template_field->getPossibleValues();
 			if ( $this->hasFieldArg( 'mapping using translate' ) ) {
-				$other_args['value_labels'] = [];
-				foreach ( $other_args['possible_values'] as $key ) {
-					$other_args['value_labels'][$key] = $parser->recursiveTagParse( '{{int:' . $this->getFieldArg( 'mapping using translate' ) . $key . '}}' );
-				}
+				$mappedValues = PFMappingUtils::getValuesWithTranslateMapping( $other_args['possible_values'], $other_args['mapping using translate'] );
+				$other_args['value_labels'] = array_values( $mappedValues );
 			} else {
 				$other_args['value_labels'] = $this->template_field->getValueLabels();
 			}
@@ -1131,7 +1072,7 @@ class PFFormField {
 		foreach ( $other_args as $argname => $argvalue ) {
 			if ( is_string( $argvalue ) ) {
 				$other_args[$argname] =
-					$parser->recursiveTagParse( $argvalue );
+					PFFormPrinter::getParsedValue( $parser, $argvalue );
 			}
 		}
 

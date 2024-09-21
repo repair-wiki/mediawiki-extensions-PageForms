@@ -49,7 +49,9 @@ class PFTemplateField {
 			// Keep this field null if no value was set.
 			$f->mLabel = trim( str_replace( '\\', '', $label ) );
 		}
-		$f->setSemanticProperty( $semanticProperty );
+		if ( $semanticProperty !== null ) {
+			$f->setSemanticProperty( $semanticProperty );
+		}
 		$f->mIsList = $isList;
 		$f->mDelimiter = $delimiter;
 		$f->mDisplay = $display;
@@ -119,10 +121,7 @@ class PFTemplateField {
 			} elseif ( $key == 'delimiter' ) {
 				$f->mDelimiter = $value;
 			} elseif ( $key == 'namespace' ) {
-				$f->mNSText = $value;
-				// Translate from text to ID.
-				$dummyTitle = Title::newFromText( $value . ':ABC' );
-				$f->mNamespace = $dummyTitle->getNamespace();
+				$f->setNSText( $value );
 			} elseif ( $key == 'display' ) {
 				$f->mDisplay = $value;
 			} elseif ( $key == 'holds template' ) {
@@ -209,19 +208,8 @@ class PFTemplateField {
 		$this->mCargoField = $fieldName;
 
 		if ( $fieldDescription === null ) {
-			try {
-				$tableSchemas = CargoUtils::getTableSchemas( [ $tableName ] );
-			} catch ( MWException $e ) {
-				return;
-			}
-			if ( count( $tableSchemas ) == 0 ) {
-				return;
-			}
-			$tableSchema = $tableSchemas[$tableName];
-			$fieldDescriptions = $tableSchema->mFieldDescriptions;
-			if ( array_key_exists( $fieldName, $fieldDescriptions ) ) {
-				$fieldDescription = $fieldDescriptions[$fieldName];
-			} else {
+			$fieldDescription = PFUtils::getCargoFieldDescription( $tableName, $fieldName );
+			if ( $fieldDescription == null ) {
 				return;
 			}
 		}
@@ -372,7 +360,15 @@ class PFTemplateField {
 	}
 
 	function setNamespace( $namespace ) {
+		$this->mNSText = PFUtils::getCanonicalName( $namespace );
 		$this->mNamespace = $namespace;
+	}
+
+	function setNSText( $nsText ) {
+		$this->mNSText = $nsText;
+		// Translate from text to ID.
+		$dummyTitle = Title::newFromText( $nsText . ':ABC' );
+		$this->mNamespace = $dummyTitle->getNamespace();
 	}
 
 	function setFieldType( $fieldType ) {

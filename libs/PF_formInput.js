@@ -3,10 +3,12 @@
  *
  * JS handling for #forminput and Special:FormStart.
  *
+ * @param $
+ * @param mw
  * @author Yaron Koren
  */
 
-( function ( $, mw ) {
+( function( $, mw ) {
 
 	$.fn.displayPFFormInput = function() {
 		var formLayouts = [];
